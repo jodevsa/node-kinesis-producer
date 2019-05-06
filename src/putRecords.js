@@ -2,18 +2,13 @@ const MAX_RETRIES=10
 const MIN_WAIT_TIME=150;
 const MULTIPLY_FACTOR=2;
 const util = require('util');
-const AWS = require('aws-sdk');
-AWS.config.update({
-		  region: 'eu-west-1',
-		  signatureVersion: 'v4',
-});
 const sleep=function(ms){
 	return new Promise((resolve)=>setInterval(resolve,ms));
 }
-const kinesis = new AWS.Kinesis();
-const putRecordsAsync = util.promisify(kinesis.putRecords).bind(kinesis);
-const listShards = util.promisify(kinesis.listShards).bind(kinesis);
-async function putRecords(recordsParams){
+
+async function putRecords({client,recordsParams}){
+	const putRecordsAsync = util.promisify(client.putRecords).bind(client);
+	const listShards = util.promisify(client.listShards).bind(client);
 	let waitTime=MIN_WAIT_TIME;
 	for(let i=0;i<MAX_RETRIES;i++){
 		if(i!=0){
