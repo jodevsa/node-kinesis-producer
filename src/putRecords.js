@@ -17,6 +17,7 @@ async function putRecords({client,recordsParams}){
 		}
 		const result = await putRecordsAsync(recordsParams);
   	if (result.FailedRecordCount != 0) {
+  		console.log(result)
 		 continue;
 		}
 		return result;

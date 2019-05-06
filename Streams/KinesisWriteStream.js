@@ -6,7 +6,7 @@ const putRecords = require('../src/putRecords.js')
 const debug= require('debug')('WriteStream');
 const RateLimiter = require('../src/helpers/RateLimit.js');
 
-const KINESIS_ITEMS_PER_SECOND = 1000;
+const KINESIS_ITEMS_PER_SECOND = 1000
 const KINESIS_BYTES_PER_SECOND=filesizeParser('1 mb');
 const KINESIS_INETRVAL_LENGTH = parseDurationString("1000 ms");
 class WritableStream extends stream.Writable{
@@ -30,9 +30,15 @@ class WritableStream extends stream.Writable{
 		
 	}
 	async _putRecords(cb,record,totalBytes){
+		if(this.state==='processing'){
+			exit();
+		}
 		this.state='processing';
+		console.log(this.state);
 		this._stopInternalClock();
-		await this.rateLimiter.aquireInnovocations({count:this.internalBuffer.length,size:this.totalBytes},true);
+		console.log(Date.now(),this.internalBuffer.length,this.totalSize,record,totalBytes);
+		await this.rateLimiter.aquireInnovocations({count:this.internalBuffer.length,size:this.totalSize},true);
+		console.log(Date.now(),this.internalBuffer.length,this.totalSize);
 		console.log('here',this.internalBuffer.length)
 
 		const recordsParams = {
@@ -45,20 +51,22 @@ class WritableStream extends stream.Writable{
 		this.internalBuffer=[];
 		this.totalSize=0;
 		if(record && totalBytes){
-			this.internalBuffer.push(record);
-			this.totalSize+=totalBytes;
+			this.internalBuffer=[record];
+			this.totalSize=totalBytes;
 			if(this.internalBuffer.length===1){
 				this._startInternalClock();
 			}
 		}
-		if(cb){
-			cb();
-		}
+	
+	  	this.state='open';
 		this.continueOpen();
 		this.continueOpen=()=>{};
-		this.state='open';
+			if(cb){
+			cb();
+		}
 	}
 	_startInternalClock(){
+		console.log('start clockS')
 		this._startTime=Date.now();
 		if(this._timeoutReference){
 			this._stopInternalClock();
@@ -66,6 +74,7 @@ class WritableStream extends stream.Writable{
 		this._timeoutReference=setTimeout(this._putRecords.bind(this),this.batchDuration)
 	}
 	_stopInternalClock(){
+		console.log('stop clock')
 		if(this._timeoutReference){
 			clearTimeout(this._timeoutReference);
 			this._timeoutReference=null;
@@ -81,16 +90,18 @@ class WritableStream extends stream.Writable{
 				this.state='open';
 				this.internalBuffer.push(record);
 				this.totalSize+=totalBytes;
+				console.log(this.internalBuffer.length,'84')
 				if(this.internalBuffer.length===1){
 					this._startInternalClock();
 				}
 				this.state='open';
+				console.log('here......')
 				cb();
 
 			}
 			return ;
 		}
-		if(this.internalBuffer.length+1 === RECORD_LIMIT || this.totalSize + totalBytes > filesizeParser('1 mb') && totalBytes!=0){
+		if(this.internalBuffer.length+1 === KINESIS_ITEMS_PER_SECOND || this.totalSize + totalBytes > KINESIS_BYTES_PER_SECOND && totalBytes!=0){
 			return this._putRecords(cb,record,totalBytes);
 		}
 		this.internalBuffer.push(record);
