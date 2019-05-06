@@ -5,12 +5,19 @@ const filesizeParser = require('filesize-parser');
 const putRecords = require('../src/putRecords.js')
 const debug= require('debug')('WriteStream');
 const RateLimiter = require('../src/helpers/RateLimit.js');
+
+const KINESIS_ITEMS_PER_SECOND = 1000;
+const KINESIS_BYTES_PER_SECOND=filesizeParser('1 mb');
+const KINESIS_INETRVAL_LENGTH = parseDurationString("1000 ms");
 class WritableStream extends stream.Writable{
 	constructor({streamName, batchDuration, client}){
 		super({objectMode:true})
 		this.streamName=streamName;
 		this.internalBuffer=[];
-		this.rateLimiter= new RateLimiter({limitPerInterval:500,sizeLimitPerInterval:"1000 mb",interval:"1000 ms"});
+		// these are kinesis limits, not mine!
+		this.rateLimiter= new RateLimiter({limitPerInterval:KINESIS_ITEMS_PER_SECOND,
+																			 sizeLimitPerInterval:KINESIS_BYTES_PER_SECOND,
+																			 interval:KINESIS_INETRVAL_LENGTH});
 		this.inflightRecords;
 		this.totalSize=0;
 		if(!client){
@@ -20,7 +27,7 @@ class WritableStream extends stream.Writable{
 		this.batchDuration= typeof(batchDuration)==='string'?parseDurationString(batchDuration):batchDuration;
 		
 	}
-	async _putRecords(cb,{record,totalBytes}){
+	async _putRecords(cb,record,totalBytes){
 		this._stopInternalClock();
 		await this.rateLimiter.aquireInnovocations({count:this.internalBuffer.length,size:this.totalBytes},true);
 		console.log('here',this.internalBuffer.length)
@@ -31,11 +38,16 @@ class WritableStream extends stream.Writable{
 		    };
 		const result= await putRecords({client:this.client,recordsParams})
 		console.log('total size', this.totalSize)
-		debug(`Successfully put ${this.internalBuffer.length}/${this.total} Kinesis Records`)
+		debug(`Successfully put ${this.internalBuffer.length} Kinesis Records`)
 		this.internalBuffer=[];
 		this.totalSize=0;
-		if(record){
-			console.log('34')
+		if(record && totalBytes){
+			console.log('45...')
+			this.internalBuffer.push(record);
+			this.totalSize+=totalBytes;
+			if(this.internalBuffer.length===1){
+				this._startInternalClock();
+			}
 		}
 		if(cb){
 			cb();
@@ -59,7 +71,7 @@ class WritableStream extends stream.Writable{
 		record.Data=encodedData.data;
 		record.PartitionKey=encodedData.partitionKey;
 		if(this.totalSize + totalBytes > filesizeParser('1 mb') && totalBytes!=0){
-			return this._putRecords(cb,record);
+			return this._putRecords(cb,record,totalBytes);
 		}
 		this.internalBuffer.push(record);
 		this.totalSize+=totalBytes;
