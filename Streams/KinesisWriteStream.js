@@ -19,15 +19,18 @@ class WritableStream extends stream.Writable{
 																			 sizeLimitPerInterval:KINESIS_BYTES_PER_SECOND,
 																			 interval:KINESIS_INETRVAL_LENGTH});
 		this.inflightRecords;
+		this.continueOpen=()=>{};
 		this.totalSize=0;
 		if(!client){
 			throw new Error("Must have  a client");
 		}
 		this.client= client;
+		this.state='open';
 		this.batchDuration= typeof(batchDuration)==='string'?parseDurationString(batchDuration):batchDuration;
 		
 	}
 	async _putRecords(cb,record,totalBytes){
+		this.state='processing';
 		this._stopInternalClock();
 		await this.rateLimiter.aquireInnovocations({count:this.internalBuffer.length,size:this.totalBytes},true);
 		console.log('here',this.internalBuffer.length)
@@ -42,7 +45,6 @@ class WritableStream extends stream.Writable{
 		this.internalBuffer=[];
 		this.totalSize=0;
 		if(record && totalBytes){
-			console.log('45...')
 			this.internalBuffer.push(record);
 			this.totalSize+=totalBytes;
 			if(this.internalBuffer.length===1){
@@ -52,6 +54,9 @@ class WritableStream extends stream.Writable{
 		if(cb){
 			cb();
 		}
+		this.continueOpen();
+		this.continueOpen=()=>{};
+		this.state='open';
 	}
 	_startInternalClock(){
 		this._startTime=Date.now();
@@ -70,14 +75,26 @@ class WritableStream extends stream.Writable{
 		let record={};
 		record.Data=encodedData.data;
 		record.PartitionKey=encodedData.partitionKey;
-		if(this.totalSize + totalBytes > filesizeParser('1 mb') && totalBytes!=0){
+		if(this.state==='processing'){
+			console.log('process.')
+			this.continueOpen=function(){
+				this.state='open';
+				this.internalBuffer.push(record);
+				this.totalSize+=totalBytes;
+				if(this.internalBuffer.length===1){
+					this._startInternalClock();
+				}
+				this.state='open';
+				cb();
+
+			}
+			return ;
+		}
+		if(this.internalBuffer.length+1 === RECORD_LIMIT || this.totalSize + totalBytes > filesizeParser('1 mb') && totalBytes!=0){
 			return this._putRecords(cb,record,totalBytes);
 		}
 		this.internalBuffer.push(record);
 		this.totalSize+=totalBytes;
-		if(this.internalBuffer.length===RECORD_LIMIT){
-			return this._putRecords(cb);
-		}
 		if(this.internalBuffer.length===1){
 			this._startInternalClock();
 		}
